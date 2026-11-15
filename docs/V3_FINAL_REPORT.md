@@ -3,6 +3,11 @@
 **Date:** 2026-11-14 · **Baseline:** V2 independently verified in Phase 0
 (131/131 pytest, 9/9 vitest, 42/42 fresh-DB smoke, 3/3 Playwright, build ✓).
 
+> **V3.1 addendum (2026-11-14):** a dedicated security/reliability/quality audit was performed
+> afterwards on branch `release/v3.1-security-reliability` — 12 security fixes, 5 reliability fixes,
+> CI pipeline, expanded e2e (17 tests), lazy loading and indexes. Current totals: backend **207/207**,
+> frontend **9/9**, e2e **17/17**. See `docs/V3_1_AUDIT_REPORT.md`; numbers below are the V3.0 snapshot.
+
 ## 1. What was already present in V2 (verified, preserved)
 Six internal roles, projects/membership, dataset collection pipeline, rubric
 builder, automated evaluation engine with borderline routing, task marketplace
