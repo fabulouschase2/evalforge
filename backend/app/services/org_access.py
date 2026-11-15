@@ -127,15 +127,23 @@ def create_invitation(db: Session, *, org_id: int, email: str, role: str,
 
 
 def accept_invitation(db: Session, *, raw_token: str, user: User) -> OrganizationMember:
-    """Attach the (existing, authenticated) user to the invited organization."""
+    """Attach the (existing, authenticated) user to the invited organization.
+
+    Concurrency-safe (V3.1): the pending->accepted transition is a single
+    conditional UPDATE, so two concurrent acceptances of the same token cannot
+    both succeed.
+    """
+    from sqlalchemy import update as _update
+
     token_hash = hash_token(raw_token)
     invitation = db.scalar(
         select(OrganizationInvitation).where(OrganizationInvitation.token_hash == token_hash)
     )
     if invitation is None:
         raise LookupError("Invitation not found.")
-    if invitation.status != "pending":
-        raise PermissionError("This invitation is no longer active.")
+    if invitation.email.lower() != user.email.lower():
+        raise PermissionError("This invitation was issued to a different email address.")
+
     expires = invitation.expires_at
     if expires is not None:
         # SQLite returns naive datetimes; normalize before comparing.
@@ -146,15 +154,31 @@ def accept_invitation(db: Session, *, raw_token: str, user: User) -> Organizatio
             invitation.status = "expired"
             db.commit()
             raise PermissionError("This invitation has expired.")
-    if invitation.email.lower() != user.email.lower():
-        raise PermissionError("This invitation was issued to a different email address.")
-    existing = db.scalar(
+
+    result = db.execute(
+        _update(OrganizationInvitation)
+        .where(
+            OrganizationInvitation.id == invitation.id,
+            OrganizationInvitation.status == "pending",
+        )
+        .values(status="accepted", accepted_user_id=user.id,
+                accepted_at=datetime.now(timezone.utc))
+    )
+    if result.rowcount == 0:
+        db.rollback()
+        # re-read to give the caller an accurate reason
+        db.refresh(invitation)
+        if invitation.status == "expired":
+            raise PermissionError("This invitation has expired.")
+        raise PermissionError("This invitation is no longer active.")
+
+    member = db.scalar(
         select(OrganizationMember).where(
             OrganizationMember.organization_id == invitation.organization_id,
             OrganizationMember.user_id == user.id,
         )
     )
-    if existing is None:
+    if member is None:
         member = OrganizationMember(
             organization_id=invitation.organization_id,
             user_id=user.id,
@@ -162,11 +186,6 @@ def accept_invitation(db: Session, *, raw_token: str, user: User) -> Organizatio
             added_by=invitation.invited_by,
         )
         db.add(member)
-    else:
-        member = existing
-    invitation.status = "accepted"
-    invitation.accepted_user_id = user.id
-    invitation.accepted_at = datetime.now(timezone.utc)
     # upgrade platform role to the client role if the account is a bare tester
     if user.role == UserRole.TESTER:
         user.role = invitation.role
