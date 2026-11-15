@@ -6,6 +6,9 @@ Updated after every phase. Newest entries at top.
 
 ## 2026-11-14 — V3.1 security, reliability & quality audit (branch `release/v3.1-security-reliability`)
 
+**Pushed:** branch `release/v3.1-security-reliability` on GitHub (tip `fef0b0f`, 8 commits, clean tree).
+**Pull request:** [#1 — "V3.1 — Security, reliability and quality audit"](https://github.com/fabulouschase2/evalforge/pull/1) targeting `main` (main stays at V3.0 tip `44ce01f` until the PR is merged).
+
 ### Final verification
 - Backend pytest **207/207** (188 V3 + 19 new security/reliability regression tests)
 - Frontend Vitest **9/9** · `tsc -b` clean · production build **✓**
