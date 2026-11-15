@@ -1,61 +1,63 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ToastProvider } from "@/components/ui/toast";
 import { AppShell } from "@/components/layout/AppShell";
-import { EmptyState } from "@/components/ui/states";
+import { EmptyState, TableSkeleton } from "@/components/ui/states";
 
-import LoginPage from "@/pages/LoginPage";
-import RegisterPage from "@/pages/RegisterPage";
-import DashboardPage from "@/pages/DashboardPage";
-import ProjectsPage from "@/pages/ProjectsPage";
-import ProjectDetailPage from "@/pages/admin/ProjectDetailPage";
-import DatasetsPage from "@/pages/DatasetsPage";
-import DatasetDetailPage from "@/pages/DatasetDetailPage";
-import DataCollectionPage from "@/pages/admin/DataCollectionPage";
-import TasksAdminPage from "@/pages/admin/TasksAdminPage";
-import WorkersPage from "@/pages/admin/WorkersPage";
-import RubricsPage from "@/pages/RubricsPage";
-import RubricNewPage from "@/pages/RubricNewPage";
-import RubricDetailPage from "@/pages/RubricDetailPage";
-import EvaluationsPage from "@/pages/EvaluationsPage";
-import EvaluationDetailPage from "@/pages/EvaluationDetailPage";
-import ReviewsPage from "@/pages/ReviewsPage";
-import ReviewDetailPage from "@/pages/ReviewDetailPage";
-import AnalyticsPage from "@/pages/AnalyticsPage";
-import AuditLogsPage from "@/pages/AuditLogsPage";
-import SettingsPage from "@/pages/SettingsPage";
-import OrganizationsPage from "@/pages/OrganizationsPage";
-import ProjectRequestsPage from "@/pages/admin/ProjectRequestsPage";
-import ProjectClientPage from "@/pages/admin/ProjectClientPage";
-import GoldenTasksPage from "@/pages/admin/GoldenTasksPage";
-import GoldenMonitoringPage from "@/pages/quality/GoldenMonitoringPage";
-import QualificationsPage from "@/pages/admin/QualificationsPage";
-import QualificationGradingPage from "@/pages/quality/QualificationGradingPage";
-import MyQualificationsPage from "@/pages/tester/MyQualificationsPage";
-import MultimodalPage from "@/pages/admin/MultimodalPage";
-import IntegrationsPage from "@/pages/admin/IntegrationsPage";
-import ClientDashboard from "@/pages/client/ClientDashboard";
-import ClientRequests from "@/pages/client/ClientRequests";
-import ClientProjects from "@/pages/client/ClientProjects";
-import ClientDatasets from "@/pages/client/ClientDatasets";
-import ClientMessages from "@/pages/client/ClientMessages";
-import ClientDeliverables from "@/pages/client/ClientDeliverables";
-
-import TaskMarketplacePage from "@/pages/tester/TaskMarketplacePage";
-import MyTasksPage from "@/pages/tester/MyTasksPage";
-import TaskWorkspacePage from "@/pages/tester/TaskWorkspacePage";
-import SubmissionsPage from "@/pages/tester/SubmissionsPage";
-
-import ReviewQueuePage from "@/pages/reviewer/ReviewQueuePage";
-import SubmissionReviewPage from "@/pages/reviewer/SubmissionReviewPage";
-import {
-  AdjudicationQueuePage, AgreementAnalysisPage, ReviewerPerformancePage, TesterPerformancePage,
-} from "@/pages/quality/QualityPages";
-import NotificationsPage from "@/pages/NotificationsPage";
-import ProfilePage from "@/pages/ProfilePage";
+// V3.1 performance: route-level code splitting. Every page is lazy-loaded so
+// the initial bundle only contains the app shell, auth and the login route.
+const LoginPage = lazy(() => import("@/pages/LoginPage"));
+const RegisterPage = lazy(() => import("@/pages/RegisterPage"));
+const DashboardPage = lazy(() => import("@/pages/DashboardPage"));
+const ProjectsPage = lazy(() => import("@/pages/ProjectsPage"));
+const ProjectDetailPage = lazy(() => import("@/pages/admin/ProjectDetailPage"));
+const DatasetsPage = lazy(() => import("@/pages/DatasetsPage"));
+const DatasetDetailPage = lazy(() => import("@/pages/DatasetDetailPage"));
+const DataCollectionPage = lazy(() => import("@/pages/admin/DataCollectionPage"));
+const TasksAdminPage = lazy(() => import("@/pages/admin/TasksAdminPage"));
+const WorkersPage = lazy(() => import("@/pages/admin/WorkersPage"));
+const RubricsPage = lazy(() => import("@/pages/RubricsPage"));
+const RubricNewPage = lazy(() => import("@/pages/RubricNewPage"));
+const RubricDetailPage = lazy(() => import("@/pages/RubricDetailPage"));
+const EvaluationsPage = lazy(() => import("@/pages/EvaluationsPage"));
+const EvaluationDetailPage = lazy(() => import("@/pages/EvaluationDetailPage"));
+const ReviewsPage = lazy(() => import("@/pages/ReviewsPage"));
+const ReviewDetailPage = lazy(() => import("@/pages/ReviewDetailPage"));
+const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage"));
+const AuditLogsPage = lazy(() => import("@/pages/AuditLogsPage"));
+const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
+const OrganizationsPage = lazy(() => import("@/pages/OrganizationsPage"));
+const ProjectRequestsPage = lazy(() => import("@/pages/admin/ProjectRequestsPage"));
+const ProjectClientPage = lazy(() => import("@/pages/admin/ProjectClientPage"));
+const GoldenTasksPage = lazy(() => import("@/pages/admin/GoldenTasksPage"));
+const GoldenMonitoringPage = lazy(() => import("@/pages/quality/GoldenMonitoringPage"));
+const QualificationsPage = lazy(() => import("@/pages/admin/QualificationsPage"));
+const QualificationGradingPage = lazy(() => import("@/pages/quality/QualificationGradingPage"));
+const MyQualificationsPage = lazy(() => import("@/pages/tester/MyQualificationsPage"));
+const MultimodalPage = lazy(() => import("@/pages/admin/MultimodalPage"));
+const IntegrationsPage = lazy(() => import("@/pages/admin/IntegrationsPage"));
+const ClientDashboard = lazy(() => import("@/pages/client/ClientDashboard"));
+const ClientRequests = lazy(() => import("@/pages/client/ClientRequests"));
+const ClientProjects = lazy(() => import("@/pages/client/ClientProjects"));
+const ClientDatasets = lazy(() => import("@/pages/client/ClientDatasets"));
+const ClientMessages = lazy(() => import("@/pages/client/ClientMessages"));
+const ClientDeliverables = lazy(() => import("@/pages/client/ClientDeliverables"));
+const TaskMarketplacePage = lazy(() => import("@/pages/tester/TaskMarketplacePage"));
+const MyTasksPage = lazy(() => import("@/pages/tester/MyTasksPage"));
+const TaskWorkspacePage = lazy(() => import("@/pages/tester/TaskWorkspacePage"));
+const SubmissionsPage = lazy(() => import("@/pages/tester/SubmissionsPage"));
+const ReviewQueuePage = lazy(() => import("@/pages/reviewer/ReviewQueuePage"));
+const SubmissionReviewPage = lazy(() => import("@/pages/reviewer/SubmissionReviewPage"));
+const QualityPagesModule = () => import("@/pages/quality/QualityPages");
+const AdjudicationQueuePage = lazy(() => QualityPagesModule().then((m) => ({ default: m.AdjudicationQueuePage })));
+const ReviewerPerformancePage = lazy(() => QualityPagesModule().then((m) => ({ default: m.ReviewerPerformancePage })));
+const TesterPerformancePage = lazy(() => QualityPagesModule().then((m) => ({ default: m.TesterPerformancePage })));
+const AgreementAnalysisPage = lazy(() => QualityPagesModule().then((m) => ({ default: m.AgreementAnalysisPage })));
+const NotificationsPage = lazy(() => import("@/pages/NotificationsPage"));
+const ProfilePage = lazy(() => import("@/pages/ProfilePage"));
 
 import "@/index.css";
 
@@ -64,6 +66,14 @@ const queryClient = new QueryClient({
     queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 15_000 },
   },
 });
+
+function RouteFallback() {
+  return (
+    <div className="p-6">
+      <TableSkeleton rows={6} cols={4} />
+    </div>
+  );
+}
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { token } = useAuth();
@@ -130,6 +140,7 @@ function App() {
   const { token } = useAuth();
   return (
     <DebugErrorBoundary>
+    <Suspense fallback={<RouteFallback />}>
     <Routes>
       <Route path="/login" element={token ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
       <Route path="/register" element={token ? <Navigate to="/dashboard" replace /> : <RegisterPage />} />
@@ -195,6 +206,7 @@ function App() {
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
+    </Suspense>
     </DebugErrorBoundary>
   );
 }
