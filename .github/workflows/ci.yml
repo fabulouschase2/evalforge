@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: Backend — pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run test suite (fresh in-memory DB per test)
+        run: python -m pytest --tb=short -q
+
+  frontend:
+    name: Frontend — tsc + vitest + production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: TypeScript check
+        run: npx tsc -b
+      - name: Unit tests (Vitest)
+        run: npm test -- --run
+      - name: Production build
+        run: npm run build
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  migrations:
+    name: Migrations — fresh SQLite + fresh PostgreSQL
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: evalforge
+          POSTGRES_PASSWORD: evalforge
+          POSTGRES_DB: evalforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evalforge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Alembic chain on fresh SQLite
+        run: |
+          python -m alembic upgrade head
+          python -c "import sqlite3,os; \
+            c=sqlite3.connect('ci_sqlite.db'); \
+            n=len(c.execute(\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()); \
+            print(f'{n} tables'); assert n >= 45, 'migration chain incomplete'"
+        env:
+          DATABASE_URL: sqlite:///./ci_sqlite.db
+      - name: Alembic chain on fresh PostgreSQL
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+        env:
+          DATABASE_URL: postgresql+psycopg://evalforge:evalforge@localhost:5432/evalforge
+      - name: Startup checks refuse stale databases (production gate)
+        run: |
+          python - <<'PY'
+          import os
+          os.environ["DATABASE_URL"] = "sqlite:///./ci_sqlite.db"
+          from sqlalchemy import create_engine, text
+          engine = create_engine("sqlite:///./ci_sqlite.db")
+          with engine.connect() as c:
+              c.execute(text("UPDATE alembic_version SET version_num='4bfc767ebcea'"))
+          from app.core.startup_checks import check_migrations_up_to_date
+          try:
+              check_migrations_up_to_date(engine)
+          except RuntimeError as exc:
+              assert "REFUSING TO START" in str(exc)
+              print("startup gate OK:", exc)
+          else:
+              raise AssertionError("stale database was not refused")
+          PY
+        env:
+          DATABASE_URL: sqlite:///./ci_sqlite.db
+
+  e2e:
+    name: E2E — Playwright (API + browser)
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install backend dependencies
+        run: pip install -r requirements.txt
+        working-directory: backend
+      - name: Initialize database and start backend
+        run: |
+          python -m alembic upgrade head
+          nohup python -m uvicorn app.main:app --port 8000 --log-level warning &
+          sleep 4
+          curl -sf http://127.0.0.1:8000/api/health
+        working-directory: backend
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - name: Start frontend dev server
+        run: |
+          nohup npm run dev -- --port 5173 --strictPort &
+          sleep 6
+          curl -sf http://localhost:5173/ > /dev/null
+        working-directory: frontend
+      - name: API integration smoke test (42 checks)
+        run: python smoke_test.py http://127.0.0.1:8000
+        working-directory: backend
+      - name: Playwright end-to-end suites
+        run: npx playwright test
+        working-directory: frontend
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: frontend/test-results
+          retention-days: 7

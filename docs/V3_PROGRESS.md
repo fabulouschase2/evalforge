@@ -4,6 +4,44 @@ Updated after every phase. Newest entries at top.
 
 ---
 
+## 2026-11-14 — V3.1 security, reliability & quality audit (branch `release/v3.1-security-reliability`)
+
+**Pushed:** branch `release/v3.1-security-reliability` on GitHub (tip `fef0b0f`, 8 commits, clean tree).
+**Pull request:** [#1 — "V3.1 — Security, reliability and quality audit"](https://github.com/fabulouschase2/evalforge/pull/1) targeting `main` (main stays at V3.0 tip `44ce01f` until the PR is merged).
+
+### Final verification
+- Backend pytest **207/207** (188 V3 + 19 new security/reliability regression tests)
+- Frontend Vitest **9/9** · `tsc -b` clean · production build **✓**
+- Playwright e2e **17/17** (v2 workflow 3 + client portal 4 + quality flows 5 + multimodal/integrations 5)
+- Alembic chain re-verified on fresh DB (now 8 migrations incl. `a7b8c9d0e123` performance indexes)
+- Full report: `docs/V3_1_AUDIT_REPORT.md`
+
+### Security fixes (each with a regression test)
+S1 production SECRET_KEY validation · S2 user directory staff-only · S3 evaluation-run IDOR scoping ·
+S4 rubric read/write scoping · S5 global analytics staff-only · S6 audit logs administrator-only ·
+S7 review-assignment project gate · S8 adjudication project gate · S9 projectless-dataset staff-only ·
+S10 webhook hardening (redirects never followed, credential URLs rejected, delivery-time re-resolution) ·
+S11 random per-run demo passwords + production demo gate · S12 configurable login rate limit (60/5min).
+
+### Reliability fixes
+R1 `create_all` dev/test-only · R2 production startup refuses missing/stale Alembic revisions ·
+R3 `/api/health/live` + migration state in readiness · R4 idempotency-key insert-race safety ·
+R5 invitation acceptance atomic guard · R6 verified existing atomic claim paths.
+
+### Quality / performance
+- GitHub Actions CI (backend, frontend, migrations on SQLite+PostgreSQL with stale-DB startup gate, e2e).
+- e2e coverage expanded to 17 tests across 4 specs (golden config+scoring, qualification take-pass,
+  revision requests, adjudication surface, image/audio annotation, API key lifecycle, webhook SSRF UI).
+- Route-level lazy loading: initial JS **964 → 334 kB (gzip 266 → 107 kB)**; 47 route chunks.
+- Composite indexes: webhook due-scan, golden-report join (migration `a7b8c9d0e123`).
+- Demo passwords: random per seed run, printed once; all published demo passwords removed from docs.
+
+### Bug found and fixed by the new e2e
+`GET /api/qualifications/{id}/attempt` crashed (500, `.isoformat()` on None) for assessments
+without a time limit once an attempt existed — fixed, covered by the take-flow e2e test.
+
+---
+
 ## 2026-11-14 — V3 COMPLETE (Phases 0–10 + final verification)
 
 ### Final verification results

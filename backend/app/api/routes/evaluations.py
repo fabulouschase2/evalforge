@@ -1,4 +1,9 @@
-"""Evaluation routes: create, run, list, results, findings."""
+"""Evaluation routes: create, run, list, results, findings.
+
+V3.1: every read is scoped through the dataset's project visibility — a run is
+exactly as visible as the dataset it evaluates. Platform-wide roles see all;
+staff additionally see runs on projectless datasets.
+"""
 from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import select
 
@@ -6,11 +11,36 @@ from app.core.security import AdminPM, AdminPMEvaluator, CurrentUser, DbSession
 from app.models.dataset import Dataset, DatasetRecord, DatasetVersion
 from app.models.evaluation import EvaluationFinding, EvaluationResult, EvaluationRun
 from app.models.rubric import Rubric, RubricVersion
+from app.models.user import UserRole
 from app.schemas import EvaluationCreate, EvaluationOut, PaginatedOut, ResultDetailOut, ResultOut
 from app.engine.runner import run_evaluation
+from app.services import access as acl
 from app.services.audit import log_action
 
 router = APIRouter(prefix="/api/evaluations", tags=["evaluations"])
+
+
+def _run_visible(db: DbSession, user, run: EvaluationRun) -> bool:
+    dataset = db.get(Dataset, run.dataset_id)
+    if dataset is None:
+        return user.role in UserRole.STAFF
+    if dataset.project_id is None:
+        return user.role in UserRole.STAFF or user.role in UserRole.PLATFORM_WIDE
+    try:
+        acl.require_project(db, user, dataset.project_id)
+        return True
+    except PermissionError:
+        return False
+    except LookupError:
+        return False
+
+
+def _load_run_scoped(db: DbSession, user, run_id: int) -> EvaluationRun:
+    run = db.get(EvaluationRun, run_id)
+    if run is None or not _run_visible(db, user, run):
+        # 404 (not 403) so run ids of other tenants are not enumerable
+        raise HTTPException(status_code=404, detail="Evaluation run not found.")
+    return run
 
 
 @router.post("", response_model=EvaluationOut, status_code=201)
@@ -18,6 +48,16 @@ def create_evaluation(payload: EvaluationCreate, db: DbSession, user: AdminPMEva
     dataset = db.get(Dataset, payload.dataset_id)
     if dataset is None:
         raise HTTPException(status_code=404, detail="Dataset not found.")
+    if dataset.project_id is not None:
+        try:
+            project = acl.require_project(db, user, dataset.project_id)
+            acl.require_project_admin(db, user, project)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+    elif user.role != UserRole.SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail="Runs on projectless datasets are created by super admins.")
     rubric = db.get(Rubric, payload.rubric_id)
     if rubric is None:
         raise HTTPException(status_code=404, detail="Rubric not found.")
@@ -72,22 +112,18 @@ def list_evaluations(db: DbSession, user: CurrentUser, status: str | None = None
     stmt = select(EvaluationRun).order_by(EvaluationRun.created_at.desc()).limit(limit)
     if status:
         stmt = stmt.where(EvaluationRun.status == status)
-    return list(db.scalars(stmt).all())
+    runs = list(db.scalars(stmt).all())
+    return [r for r in runs if _run_visible(db, user, r)]
 
 
 @router.get("/{run_id}", response_model=EvaluationOut)
 def get_evaluation(run_id: int, db: DbSession, user: CurrentUser):
-    run = db.get(EvaluationRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Evaluation run not found.")
-    return run
+    return _load_run_scoped(db, user, run_id)
 
 
 @router.post("/{run_id}/run", response_model=EvaluationOut)
 def execute_run(run_id: int, db: DbSession, user: AdminPMEvaluator, request: Request):
-    run = db.get(EvaluationRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Evaluation run not found.")
+    run = _load_run_scoped(db, user, run_id)
     if run.status == "completed":
         raise HTTPException(status_code=409, detail="Run already completed. Create a new run to re-evaluate (results are preserved for traceability).")
     if run.status == "running":
@@ -129,9 +165,7 @@ def list_results(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
 ):
-    run = db.get(EvaluationRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Evaluation run not found.")
+    run = _load_run_scoped(db, user, run_id)
     stmt = select(EvaluationResult).where(EvaluationResult.run_id == run_id)
     if status:
         stmt = stmt.where(EvaluationResult.status == status)
@@ -145,6 +179,7 @@ def list_results(
 
 @router.get("/{run_id}/results/{result_id}", response_model=ResultDetailOut)
 def get_result(run_id: int, result_id: int, db: DbSession, user: CurrentUser):
+    _load_run_scoped(db, user, run_id)
     result = db.get(EvaluationResult, result_id)
     if result is None or result.run_id != run_id:
         raise HTTPException(status_code=404, detail="Result not found in this run.")
@@ -157,9 +192,7 @@ def get_result(run_id: int, result_id: int, db: DbSession, user: CurrentUser):
 
 @router.get("/{run_id}/findings")
 def run_findings(run_id: int, db: DbSession, user: CurrentUser, passed: bool | None = None, limit: int = Query(100, ge=1, le=500)):
-    run = db.get(EvaluationRun, run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Evaluation run not found.")
+    _load_run_scoped(db, user, run_id)
     stmt = (
         select(EvaluationFinding)
         .join(EvaluationResult, EvaluationFinding.result_id == EvaluationResult.id)

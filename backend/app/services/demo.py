@@ -24,8 +24,6 @@ from app.services.audit import log_action
 
 logger = logging.getLogger("evalforge.demo")
 
-DEMO_PASSWORD = "DemoReview!23"
-
 DEMO_RUBRIC_DEFINITION = {
     "name": "Support Response Quality",
     "description": (
@@ -238,20 +236,37 @@ def _demo_rows_with_meta() -> list[dict]:
     return rows
 
 
-def create_demo_users(db: Session) -> list[User]:
-    """Two demo reviewers used for independent reviews (password documented in README)."""
+def create_demo_users(db: Session) -> tuple[list[User], str]:
+    """Two demo reviewers used for independent reviews.
+
+    V3.1: the password is RANDOM per seed run — printed once to the server
+    console and returned to the calling staff member. It is never hardcoded,
+    documented, or predictable, so a forgotten demo instance cannot be
+    compromised from documentation alone.
+    """
+    import secrets
+
+    password = "Demo-" + secrets.token_urlsafe(12)
     users = []
     for name, email in (("Demo Reviewer One", "reviewer.one@evalforge.demo"),
                         ("Demo Reviewer Two", "reviewer.two@evalforge.demo")):
         user = db.scalar(select(User).where(User.email == email))
         if user is None:
-            user = User(email=email, name=name, hashed_password=hash_password(DEMO_PASSWORD), role="reviewer")
+            user = User(email=email, name=name, hashed_password=hash_password(password), role="reviewer")
             db.add(user)
             users.append(user)
+        else:
+            # refresh the password so the printed credential always works
+            user.hashed_password = hash_password(password)
+            db.add(user)
     db.commit()
     for u in users:
         db.refresh(u)
-    return users
+    logger.warning(
+        "DEMO reviewers seeded/updated. One-time credentials (not stored in docs): "
+        "reviewer.one@evalforge.demo / reviewer.two@evalforge.demo -> %s", password,
+    )
+    return users, password
 
 
 def load_demo(db: Session, for_user: User) -> dict:
@@ -328,7 +343,7 @@ def load_demo(db: Session, for_user: User) -> dict:
             run_evaluation(db, run, list(db.scalars(select(DatasetRecord).where(DatasetRecord.dataset_version_id == version.id)).all()), rubric_version.definition)
 
     # --- Review assignments + planted independent reviews --------------------
-    reviewers = create_demo_users(db)
+    reviewers, demo_reviewer_password = create_demo_users(db)
     flagged = list(db.scalars(select(EvaluationResult).where(
         EvaluationResult.run_id == run.id, EvaluationResult.needs_review.is_(True))).all())
 
@@ -398,7 +413,7 @@ def load_demo(db: Session, for_user: User) -> dict:
         "flagged_for_review": len(flagged),
         "disagreement_items": disagreements,
         "demo_reviewer_emails": [u.email for u in reviewers],
-        "demo_password_hint": "Demo reviewers use password 'DemoReview!23' (documented in README).",
+        "demo_reviewer_password": demo_reviewer_password,
         "is_demo": True,
         "note": "All values above come from the clearly labeled demonstration dataset, not production measurements.",
     }

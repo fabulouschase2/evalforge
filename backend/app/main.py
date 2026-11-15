@@ -42,16 +42,20 @@ logger = logging.getLogger("evalforge")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
-    # Dev convenience: create tables when they don't exist. Production uses Alembic.
-    if not settings.database_url.startswith("sqlite"):
-        pass  # PostgreSQL provisioning handled by Alembic / docker-compose
-    Base.metadata.create_all(bind=engine)
+    env = settings.environment.strip().lower()
+    if env == "production":
+        # Production: never auto-create tables; require migrations to be current.
+        from app.core.startup_checks import run_production_startup_checks
+        run_production_startup_checks(engine)
+    else:
+        # Dev convenience: create tables when they don't exist. Production uses Alembic.
+        Base.metadata.create_all(bind=engine)
     # v3: external API request logging + webhook delivery worker
     from app.core import api_auth
     api_auth.bind_session_factory(SessionLocal)
     from app.services import webhooks
     webhooks.start_worker(SessionLocal)
-    logger.info("EvalForge AI backend ready (env=%s)", settings.environment)
+    logger.info("EvalForge AI backend ready (env=%s)", env)
     yield
     from app.services import webhooks as _wh
     _wh.stop_worker()
@@ -124,9 +128,23 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.get("/api/health")
 def health():
+    """Readiness: database connectivity + migration state."""
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "ok", "app": settings.app_name, "version": settings.app_version, "environment": settings.environment}
+        migrations: dict = {"checked": False}
+        if settings.environment.strip().lower() == "production":
+            from app.core.startup_checks import get_head_revision, get_stored_revision
+            stored = get_stored_revision(engine)
+            head = get_head_revision()
+            migrations = {"stored": stored, "head": head, "up_to_date": stored == head}
+        return {"status": "ok", "app": settings.app_name, "version": settings.app_version,
+                "environment": settings.environment, "database": "reachable", "migrations": migrations}
     except Exception:
         return {"status": "degraded", "database": "unreachable"}
+
+
+@app.get("/api/health/live")
+def liveness():
+    """Liveness: the process is up (no database dependency)."""
+    return {"status": "ok", "app": settings.app_name, "version": settings.app_version}

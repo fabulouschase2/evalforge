@@ -22,6 +22,17 @@ V3 extends the platform into a complete AI data operations lifecycle:
 
 See [`docs/V3_FINAL_REPORT.md`](docs/V3_FINAL_REPORT.md), [`docs/V3_ARCHITECTURE.md`](docs/V3_ARCHITECTURE.md) and [`docs/V3_PROGRESS.md`](docs/V3_PROGRESS.md) for the full V3 documentation and test results (backend 188/188, frontend 9/9, e2e 7/7, production build green).
 
+## V3.1 — security, reliability and quality hardening
+
+V3.1 is a dedicated audit pass ([full report](docs/V3_1_AUDIT_REPORT.md)):
+
+- **Security fixes** (each with a regression test): production `SECRET_KEY` startup validation; user directory, evaluation runs, rubrics and global analytics restricted to their proper audiences (IDOR/cross-tenant gaps closed, non-enumerable 404s); audit logs administrator-only; reviewer assignment and adjudication restricted to the result's project; webhook hardening (redirects never followed, credential-bearing URLs rejected, delivery-time re-resolution); demo passwords are now random per seed and demo seeding is disabled in production unless explicitly enabled.
+- **Reliability**: `create_all()` development-only; production startup **refuses to boot** on missing/stale Alembic migrations; `/api/health` readiness reports migration state, `/api/health/live` liveness; idempotency-key and invitation-acceptance races made concurrency-safe.
+- **Quality**: GitHub Actions CI (backend pytest, frontend tsc+Vitest+build, Alembic chain on fresh SQLite **and** PostgreSQL, API smoke + 17 Playwright e2e tests); e2e coverage expanded to golden tasks, qualifications, revisions, multimodal annotation and integration lifecycles.
+- **Performance**: route-level lazy loading cut the initial bundle from **964 kB to 334 kB (gzip 266 → 107 kB)**; composite indexes for the webhook due-scan and golden-report joins.
+
+Final V3.1 verification: backend **207/207**, frontend **9/9**, e2e **17/17**, production build green.
+
 **Philosophy:** automate objective checks, expose uncertainty, preserve human judgment, and make evaluation decisions reproducible.
 
 ---
@@ -220,17 +231,13 @@ The original **automated evaluation pipeline** (dataset + rubric + deterministic
 - 18 support-domain records covering: clearly correct, clearly incorrect, partially correct, evidence-thin, context-misleading, ambiguous instructions, truncated responses, JSON format cases, hedged claims, and two records **without reference material** (one actually wrong — the system must refuse to auto-fail it).
 - Gold labels + explanations on every record.
 - One evaluation run executed with the demo rubric (≈4 pass / 6 fail / 8 borderline spanning 6 borderline categories).
-- Two demo reviewers (`reviewer.one@evalforge.demo`, `reviewer.two@evalforge.demo`, password `DemoReview!23`) with planted agreement, **two disagreement items awaiting adjudication**, and pending assignments left in the queue so the review workflow can be exercised by hand.
+- Two demo reviewers (`reviewer.one@evalforge.demo`, `reviewer.two@evalforge.demo`) with planted agreement, **two disagreement items awaiting adjudication**, and pending assignments left in the queue so the review workflow can be exercised by hand. Demo account passwords are printed **once, to the operator who ran the seed** (server console) — they are deliberately not published. In production, demo seeding is disabled unless `ENABLE_DEMO=true` is set explicitly.
 
 Everything demo is named `[DEMO]`, flagged `is_demo`, and badged in the UI.
 
-### Seeded accounts used in tests / E2E
+### Test / E2E accounts
 
-| Account | Password | Role |
-|---|---|---|
-| `admin@evalforge.dev` | `AdminPass!23` | super_admin (first registered user) |
-| `reviewer.one@evalforge.demo` | `DemoReview!23` | reviewer |
-| `reviewer.two@evalforge.demo` | `DemoReview!23` | reviewer |
+Tests and e2e suites **create their own throwaway accounts** at runtime (the first registered user becomes super_admin) and are rate-limit aware. No account credentials are published in this repository. Demo seeding is restricted to staff and can be disabled entirely with `ENABLE_DEMO=false`.
 
 ## Evaluation methodology
 
@@ -268,4 +275,4 @@ EvalForge deliberately separates three kinds of judgment:
 
 ---
 
-**Demo reviewers** (created by the demo seed): `reviewer.one@evalforge.demo` / `reviewer.two@evalforge.demo`, password `DemoReview!23`.
+**Demo reviewers** (created by the demo seed): `reviewer.one@evalforge.demo` / `reviewer.two@evalforge.demo` — random per-run password, printed once to the server console when the seed runs (V3.1: no published demo passwords).

@@ -113,9 +113,7 @@ def require_dataset_read(db: Session, user: User, dataset) -> None:
             require_project(db, user, dataset.project_id)
         except PermissionError:
             raise PermissionError("You do not have access to this dataset.")
-    elif user.role not in UserRole.STAFF and user.role not in (
-        UserRole.REVIEWER, UserRole.SENIOR_REVIEWER, UserRole.TESTER
-    ):
+    elif user.role not in UserRole.STAFF:
         raise PermissionError("Datasets without a project are staff-only.")
 
 

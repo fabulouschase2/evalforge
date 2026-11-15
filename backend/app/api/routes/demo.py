@@ -14,6 +14,13 @@ router = APIRouter(prefix="/api/demo", tags=["demo"])
 
 @router.post("/load")
 def load_demonstration_data(db: DbSession, user: AdminPM, request: Request):
+    from app.core.config import settings as app_settings
+    if app_settings.environment.strip().lower() == "production" and not app_settings.enable_demo:
+        raise HTTPException(
+            status_code=403,
+            detail="Demo seeding is disabled in production. Set ENABLE_DEMO=true explicitly if you accept "
+                   "the risk of demo accounts with published passwords existing on this instance.",
+        )
     result = load_demo(db, user)
     log_action(db, user_id=user.id, action="demo.load", entity_type="evaluation", entity_id=result.get("evaluation_run_id"),
                details={

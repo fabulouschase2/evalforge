@@ -145,9 +145,9 @@ def test_client_roles_cannot_use_internal_functions(client, db, auth_headers):
     assert client.post("/api/datasets", headers=owner_headers,
                        json={"name": "Client DS"}).status_code == 403
     assert client.get("/api/users-does-not-exist").status_code in (404, 405)
-    # role change endpoint requires super_admin
+    # role change endpoint requires super_admin; the user directory is staff-only (V3.1)
     r = client.get("/api/auth/users", headers=owner_headers)
-    assert r.status_code == 200  # directory is readable for assignment flows
+    assert r.status_code == 403
     r = client.put(f"/api/auth/users/{owner['user']['id']}/role", headers=owner_headers,
                    json={"role": "super_admin"})
     assert r.status_code == 403

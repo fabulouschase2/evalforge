@@ -217,3 +217,5 @@ function AgreementAnalysisPage() {
 }
 
 export { AdjudicationQueuePage, ReviewerPerformancePage, TesterPerformancePage, AgreementAnalysisPage };
+// Default export for React.lazy route splitting (see main.tsx).
+export default { AdjudicationQueuePage, ReviewerPerformancePage, TesterPerformancePage, AgreementAnalysisPage };

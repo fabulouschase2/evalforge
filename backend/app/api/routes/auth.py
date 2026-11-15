@@ -56,8 +56,11 @@ def register(payload: RegisterRequest, db: DbSession, request: Request):
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, db: DbSession, request: Request):
+    from app.core.config import settings as app_settings
     from app.core.ratelimit import rate_limit
-    rate_limit(request, "auth-login", max_events=20, window_seconds=300)
+    # 60/5min per IP: still throttles brute force (12 attempts/min) while
+    # accommodating legitimate multi-user test suites and shared offices (V3.1).
+    rate_limit(request, "auth-login", max_events=app_settings.login_rate_limit, window_seconds=300)
     user = db.scalar(select(User).where(User.email == payload.email.lower()))
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
@@ -99,7 +102,10 @@ def my_organizations(user: CurrentUser, db: DbSession):
 
 @router.get("/users")
 def list_users(user: CurrentUser, db: DbSession):
-    """Directory of active users (any authenticated user; needed to assign reviewers)."""
+    """Directory of active users — staff only (V3.1: client and worker accounts
+    must not be able to enumerate the platform user list)."""
+    if user.role not in UserRole.STAFF:
+        raise HTTPException(status_code=403, detail="Staff access required.")
     users = db.scalars(select(User).where(User.is_active.is_(True)).order_by(User.name)).all()
     return [
         {"id": u.id, "email": u.email, "name": u.name, "role": u.role}

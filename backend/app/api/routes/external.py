@@ -55,18 +55,27 @@ def _dataset_allowed(db: Session, ctx, dataset: Dataset | None) -> Dataset:
 
 
 def _idempotency_precheck(db: Session, request: Request, ctx, body: dict | None):
-    """Returns (replay_response | None, idempotency_row | None)."""
+    """Returns (replay_response | None, idempotency_row | None).
+
+    Concurrency-safe: a unique index on (credential_id, key) arbitrates races.
+    If a concurrent request committed the same key first, the loser re-reads and
+    replays the stored response instead of double-processing (V3.1).
+    """
     key = request.headers.get("Idempotency-Key")
     if not key:
         return None, None
     request_hash = hashlib.sha256(
         json.dumps(body, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest() if body is not None else None
-    existing = db.scalar(
-        select(IdempotencyKey).where(
-            IdempotencyKey.credential_id == ctx.id, IdempotencyKey.key == key[:200]
+
+    def _existing():
+        return db.scalar(
+            select(IdempotencyKey).where(
+                IdempotencyKey.credential_id == ctx.id, IdempotencyKey.key == key[:200]
+            )
         )
-    )
+
+    existing = _existing()
     if existing is not None and existing.response_status is not None:
         if existing.request_hash and request_hash and existing.request_hash != request_hash:
             raise HTTPException(status_code=422,
@@ -76,7 +85,22 @@ def _idempotency_precheck(db: Session, request: Request, ctx, body: dict | None)
                                      endpoint=str(request.url.path),
                                      request_hash=request_hash)
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        # lost an insert race: the winner is processing (or finished) — replay it
+        db.rollback()
+        winner = _existing()
+        if winner is not None and winner.response_status is not None:
+            if winner.request_hash and request_hash and winner.request_hash != request_hash:
+                raise HTTPException(status_code=422,
+                                    detail="Idempotency-Key reused with a different request body.")
+            return JSONResponse(status_code=winner.response_status, content=winner.response_body), None
+        if winner is not None:
+            # concurrent in-flight request has not stored a response yet
+            raise HTTPException(status_code=409,
+                                detail="An identical request with this Idempotency-Key is still in progress; retry shortly.")
+        raise
     db.refresh(row)
     return None, row
 

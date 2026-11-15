@@ -49,20 +49,20 @@ def main() -> None:
     # Unauthenticated access must fail
     check("datasets require auth", client.get("/api/datasets").status_code == 401)
 
-    # Demo pipeline (dataset + rubric + engine + reviews)
-    r = client.post("/api/demo/load", headers=h)
+    # Demo pipeline (dataset + rubric + engine + reviews) — staff-only since V3
+    r = client.post("/api/demo/load", headers=ah)
     check("demo load", r.status_code == 200, f"{r.status_code} {r.text[:200]}" if r.status_code != 200 else "")
     demo = r.json()
     print("   demo:", {k: demo[k] for k in ("records", "flagged_for_review", "disagreement_items")})
 
     # Dataset records
     ds_id = demo["dataset_id"]
-    r = client.get(f"/api/datasets/{ds_id}/records?page=1&page_size=5", headers=h)
+    r = client.get(f"/api/datasets/{ds_id}/records?page=1&page_size=5", headers=ah)
     check("dataset records", r.status_code == 200 and len(r.json()["items"]) == 5)
     check("dataset pagination total", r.json()["total"] == demo["records"], str(r.json()["total"]))
 
     # Rubric versions
-    r = client.get(f"/api/rubrics/{demo['rubric_id']}/versions", headers=h)
+    r = client.get(f"/api/rubrics/{demo['rubric_id']}/versions", headers=ah)
     check("rubric versions", r.status_code == 200 and len(r.json()) == 1)
 
     # Rubric validation errors
@@ -85,13 +85,13 @@ def main() -> None:
 
     # Run results
     run_id = demo["evaluation_run_id"]
-    r = client.get(f"/api/evaluations/{run_id}", headers=h)
+    r = client.get(f"/api/evaluations/{run_id}", headers=ah)
     run = r.json()
     check("run completed", run["status"] == "completed", run["status"])
     total = run["passed_count"] + run["failed_count"] + run["borderline_count"]
     check("run totals consistent", total == run["total_records"] == demo["records"], f"pass={run['passed_count']} fail={run['failed_count']} bl={run['borderline_count']}")
 
-    r = client.get(f"/api/evaluations/{run_id}/results?page=1&page_size=100", headers=h)
+    r = client.get(f"/api/evaluations/{run_id}/results?page=1&page_size=100", headers=ah)
     results = r.json()["items"]
     check("results listed", r.status_code == 200 and len(results) == demo["records"])
 
@@ -102,27 +102,28 @@ def main() -> None:
 
     # Findings traceability
     result_id = results[0]["id"]
-    r = client.get(f"/api/evaluations/{run_id}/results/{result_id}", headers=h)
+    r = client.get(f"/api/evaluations/{run_id}/results/{result_id}", headers=ah)
     det = r.json()
     check("findings recorded", len(det["findings"]) > 0)
     f0 = det["findings"][0]
     check("finding traceability fields", all(k in f0 for k in ("rule_id", "evidence", "evaluator_version", "rubric_version", "executed_at")))
 
-    # Gold-label metrics: accuracy/precision/recall/F1 + kappa
-    r = client.get("/api/analytics/metrics", headers=h)
+    # Gold-label metrics: accuracy/precision/recall/F1 + kappa (staff-only now)
+    r = client.get("/api/analytics/metrics", headers=ah)
     m = r.json()
     print("   metrics:", {k: m.get(k) for k in ("accuracy", "precision", "recall", "f1", "cohen_kappa", "gold_labeled_count")})
     check("gold metrics computed", m.get("accuracy") is not None and m.get("f1") is not None)
     check("confusion matrix", m.get("confusion_matrix") is not None and len(m["confusion_matrix"]["matrix"]) == 2)
 
-    r = client.get("/api/analytics/agreement", headers=h)
+    r = client.get("/api/analytics/agreement", headers=ah)
     ag = r.json()
     print("   agreement:", {k: ag.get(k) for k in ("raw_agreement_rate", "fleiss_kappa", "disagreement_items")})
     check("agreement computed", ag.get("raw_agreement_rate") is not None and ag.get("fleiss_kappa") is not None)
     check("disagreement detected", ag.get("disagreement_items", 0) >= 1, str(ag.get("disagreement_items")))
 
     # Blind review enforcement: demo reviewer 1 must NOT see reviewer 2's reviews pre-submission.
-    r = client.post("/api/auth/login", json={"email": "reviewer.one@evalforge.demo", "password": "DemoReview!23"})
+    demo_password = demo.get("demo_reviewer_password")  # random per seed run (V3.1)
+    r = client.post("/api/auth/login", json={"email": "reviewer.one@evalforge.demo", "password": demo_password})
     check("demo reviewer login", r.status_code == 200)
     rtok = r.json()["access_token"]
     rh = {"Authorization": f"Bearer {rtok}"}
@@ -147,7 +148,7 @@ def main() -> None:
         check("review immutable", r.status_code == 409)
 
     # Adjudication on a disagreeing result (requires admin/project_manager role)
-    r = client.get(f"/api/evaluations/{run_id}/results?page=1&page_size=100", headers=h)
+    r = client.get(f"/api/evaluations/{run_id}/results?page=1&page_size=100", headers=ah)
     dis_ids = [x["id"] for x in r.json()["items"] if x.get("borderline_category")]
     adj_done = False
     for rid in dis_ids:
@@ -166,11 +167,13 @@ def main() -> None:
     if not adj_done:
         check("adjudication created", False, "no disagreeing result found")
 
-    # Analytics overview
-    r = client.get("/api/analytics/overview", headers=h)
+    # Analytics overview (staff-only since V3.1)
+    r = client.get("/api/analytics/overview", headers=ah)
     ov = r.json()
     check("overview populated", ov["total_records"] == demo["records"] and ov["completed_runs"] >= 1)
     check("review queue metric", ov["review_queue_size"] >= 0)
+    check("role enforcement (tester cannot read global analytics)",
+          client.get("/api/analytics/overview", headers=h).status_code == 403)
 
     # Audit logs (admin only)
     r = client.get("/api/audit-logs?page=1&page_size=50", headers=h)

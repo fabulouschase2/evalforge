@@ -1,9 +1,10 @@
 """Audit log routes and application settings."""
 from fastapi import APIRouter, Query, Request
 
-from app.core.security import AdminOnly, AdminPM, CurrentUser, DbSession
+from app.core.security import AdminOnly, CurrentUser, DbSession
 from app.db.base import get_db
 from app.models.audit import Setting
+from app.models.user import UserRole
 from app.schemas import AuditLogOut, PaginatedOut, SettingsOut, SettingsUpdate
 from app.services import audit as audit_svc
 from app.services.audit import log_action
@@ -14,13 +15,18 @@ router = APIRouter(tags=["audit", "settings"])
 @router.get("/api/audit-logs", response_model=PaginatedOut)
 def list_audit_logs(
     db: DbSession,
-    user: AdminPM,
+    user: CurrentUser,
     action: str | None = None,
     entity_type: str | None = None,
     user_id: int | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ):
+    # V3.1: the audit trail is platform-sensitive — super admins see everything;
+    # project admins see it too (matching the frontend gate); managers do not.
+    if user.role not in UserRole.ADMINISTRATORS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Administrator access required.")
     items, total = audit_svc.list_logs(db, action=action, entity_type=entity_type, user_id=user_id, page=page, page_size=page_size)
     return PaginatedOut(
         items=[AuditLogOut.model_validate(i).model_dump(mode="json") for i in items],

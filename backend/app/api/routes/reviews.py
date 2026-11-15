@@ -7,6 +7,7 @@ from app.models.dataset import DatasetRecord
 from app.models.evaluation import EvaluationFinding, EvaluationResult, EvaluationRun
 from app.models.review import Adjudication, HumanReview, ReviewAssignment
 from app.models.user import UserRole
+from app.services import access as acl
 from app.schemas import (
     AdjudicateRequest,
     AssignReviewersRequest,
@@ -68,15 +69,59 @@ def my_assignments(db: DbSession, user: CurrentUser):
 
 @router.post("/assign")
 def assign_reviewers(payload: AssignReviewersRequest, db: DbSession, user: AdminPM, request: Request):
-    result_ids = payload.result_ids
+    """Assign reviewers to flagged automated results.
+
+    V3.1: the caller must administer the project each result belongs to (results
+    inherit their run's dataset project). Assigning with no explicit result_ids
+    covers only needs_review results inside projects the caller administers.
+    """
+    from app.models.dataset import Dataset
+
+    def _result_project(result: EvaluationResult):
+        run = db.get(EvaluationRun, result.run_id)
+        if run is None:
+            return None
+        dataset = db.get(Dataset, run.dataset_id)
+        return dataset.project_id if dataset else None
+
+    result_ids = list(payload.result_ids or [])
     if not result_ids:
-        # Assign to all results currently flagged needs_review across completed runs
-        flagged = db.scalars(select(EvaluationResult).where(EvaluationResult.needs_review.is_(True))).all()
-        result_ids = [r.id for r in flagged]
+        flagged = db.scalars(
+            select(EvaluationResult).where(EvaluationResult.needs_review.is_(True))
+        ).all()
+        result_ids = [r.id for r in flagged if _administers(db, user, _result_project(r))]
+    else:
+        for rid in result_ids:
+            result = db.get(EvaluationResult, rid)
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Result {rid} not found.")
+            pid = _result_project(result)
+            if pid is None:
+                if user.role != UserRole.SUPER_ADMIN:
+                    raise HTTPException(status_code=403, detail="Projectless results are assigned by super admins.")
+                continue
+            try:
+                project = acl.require_project(db, user, pid)
+                acl.require_project_admin(db, user, project)
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc))
+            except LookupError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
     assignments = rs.create_assignments(db, result_ids, payload.reviewer_ids, assigned_by=user.id)
     log_action(db, user_id=user.id, action="review.assign", entity_type="review", entity_id=None,
                details={"result_ids": result_ids[:50], "reviewers": payload.reviewer_ids, "created": len(assignments)}, request=request)
     return {"created": len(assignments), "assignments": [AssignmentOut.model_validate(a).model_dump(mode="json") for a in assignments]}
+
+
+def _administers(db, user, project_id: int | None) -> bool:
+    if project_id is None:
+        return user.role == UserRole.SUPER_ADMIN
+    try:
+        project = acl.require_project(db, user, project_id)
+        acl.require_project_admin(db, user, project)
+        return True
+    except (PermissionError, LookupError):
+        return False
 
 
 @router.get("/{assignment_id}")
@@ -205,6 +250,22 @@ def adjudicate(result_id: int, payload: AdjudicateRequest, db: DbSession, user: 
     result = db.get(EvaluationResult, result_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Result not found.")
+    # V3.1: adjudication is restricted to the result's project (admin) or the
+    # platform-wide quality roles — no cross-project adjudication.
+    from app.models.dataset import Dataset
+    run = db.get(EvaluationRun, result.run_id)
+    dataset = db.get(Dataset, run.dataset_id) if run else None
+    project_id = dataset.project_id if dataset else None
+    if user.role not in UserRole.PLATFORM_WIDE:
+        if project_id is None:
+            raise HTTPException(status_code=403, detail="Projectless results are adjudicated by super admins.")
+        try:
+            project = acl.require_project(db, user, project_id)
+            acl.require_project_admin(db, user, project)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
     scores = {cs.criterion_id: {"score": cs.score, "comment": cs.comment} for cs in payload.final_criterion_scores}
     adjudication = rs.create_adjudication(db, result, user.id, payload.final_label, payload.rationale, scores)
     log_action(db, user_id=user.id, action="review.adjudicate", entity_type="result", entity_id=result_id,

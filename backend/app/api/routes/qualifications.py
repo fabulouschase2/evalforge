@@ -180,8 +180,11 @@ def my_attempt(assessment_id: int, db: DbSession, user: CurrentUser):
             open_attempt = None
     return {
         "assessment": qs.assessment_out(a, include_questions=bool(open_attempt)),
-        "open_attempt": {"id": open_attempt.id, "expires_at": open_attempt.expires_at.isoformat(),
-                         "attempt_number": open_attempt.attempt_number} if open_attempt else None,
+        "open_attempt": ({"id": open_attempt.id,
+                          "expires_at": (open_attempt.expires_at.isoformat()
+                                         if open_attempt.expires_at else None),
+                          "attempt_number": open_attempt.attempt_number}
+                         if open_attempt else None),
         "history": [
             {"id": x.id, "attempt_number": x.attempt_number, "status": x.status,
              "score": x.score, "submitted_at": x.submitted_at.isoformat() if x.submitted_at else None}
