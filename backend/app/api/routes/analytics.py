@@ -3,13 +3,17 @@
 V3 additions: platform rollups (staff) and CSV/JSON exports of quality
 analytics. Every number is computed from stored records; unavailable metrics
 carry an explicit reason instead of a fabricated value.
+
+V3.1: aggregate endpoints are staff-only; run-scoped metrics are visible to
+anyone who can see the run's dataset project.
 """
-from fastapi import APIRouter, Query, Response, Request
+from fastapi import APIRouter, HTTPException, Query, Response, Request
 from sqlalchemy import func, select
 
 from app.core.security import AdminPM, CurrentUser, DbSession
 from app.models.client import Deliverable, ProjectRequest
 from app.models.dataset import Dataset, DatasetRecord
+from app.models.evaluation import EvaluationRun
 from app.models.golden import GoldenTaskResult, QualityAlert
 from app.models.organization import Organization
 from app.models.project import Project
@@ -24,8 +28,29 @@ from app.services.audit import log_action
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
+def _require_analytics_access(db: DbSession, user, run_id: int | None) -> None:
+    """Global aggregates are staff-only; run-scoped metrics follow run visibility."""
+    if user.role in UserRole.STAFF or user.role in UserRole.PLATFORM_WIDE:
+        return
+    if run_id is None:
+        raise HTTPException(status_code=403, detail="Staff access required for global analytics.")
+    run = db.get(EvaluationRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Evaluation run not found.")
+    dataset = db.get(Dataset, run.dataset_id)
+    if dataset is None or dataset.project_id is None:
+        raise HTTPException(status_code=403, detail="Staff access required for these metrics.")
+    try:
+        acl.require_project(db, user, dataset.project_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 @router.get("/overview")
-def overview(db: DbSession, user: CurrentUser):
+def overview(db: DbSession, user: AdminPM):
+    """Dashboard aggregates — staff only (V3.1: was open to any authenticated user)."""
     return an.overview(db)
 
 
@@ -101,12 +126,14 @@ def export_analytics(db: DbSession, user: AdminPM, request: Request,
         if format == "json":
             return data
         rows = [("metric", "value")]
+
         def flatten(prefix, obj):
             for k, v in obj.items():
                 if isinstance(v, dict):
                     flatten(f"{prefix}{k}.", v)
                 else:
                     rows.append((f"{prefix}{k}", v))
+
         flatten("", data)
         body = "\n".join(f"{a},{b}" for a, b in rows)
         log_action(db, user_id=user.id, action="analytics.export", entity_type="analytics",
@@ -166,16 +193,19 @@ def export_analytics(db: DbSession, user: AdminPM, request: Request,
 
 @router.get("/metrics")
 def metrics(db: DbSession, user: CurrentUser, run_id: int | None = None):
+    _require_analytics_access(db, user, run_id)
     return an.run_metrics(db, run_id)
 
 
 @router.get("/agreement")
 def agreement(db: DbSession, user: CurrentUser, run_id: int | None = None):
+    _require_analytics_access(db, user, run_id)
     return an.agreement_metrics(db, run_id)
 
 
 @router.get("/confusion-matrix")
 def confusion_matrix(db: DbSession, user: CurrentUser, run_id: int | None = None):
+    _require_analytics_access(db, user, run_id)
     data = an.run_metrics(db, run_id)
     cm = data.get("confusion_matrix")
     if cm is None:

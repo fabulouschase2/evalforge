@@ -61,6 +61,8 @@ def validate_webhook_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise SSRFError("Webhook URL must use http or https.")
+    if parsed.username or parsed.password:
+        raise SSRFError("Webhook URLs must not embed credentials.")
     host = parsed.hostname
     if not host:
         raise SSRFError("Webhook URL has no host.")
@@ -134,6 +136,8 @@ def deliver_due(db: Session, max_deliveries: int = 20, allow_private: bool = Fal
         ts = int(time.time())
         sig = sign_payload(endpoint.secret, ts, body)
         try:
+            # follow_redirects=False is mandatory: a 30x must never be used to
+            # bounce a delivery onto an internal address.
             resp = httpx.post(
                 endpoint.url, content=body,
                 headers={
@@ -143,6 +147,7 @@ def deliver_due(db: Session, max_deliveries: int = 20, allow_private: bool = Fal
                     "User-Agent": "EvalForge-Webhooks/1.0",
                 },
                 timeout=10.0,
+                follow_redirects=False,
             )
             delivery.attempts += 1
             delivery.response_code = resp.status_code
